@@ -1,0 +1,8 @@
+Metadata-Version: 2.4
+Name: analytics
+Version: 0.1.0
+Summary: Option analytics package (OI skew, gamma exposure, volume spike, reversals)
+Author: Usha Bansode
+Requires-Python: >=3.9
+Requires-Dist: pandas
+Requires-Dist: numpy
