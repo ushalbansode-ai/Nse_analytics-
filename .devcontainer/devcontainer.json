@@ -1,7 +1,20 @@
 {
   "name": "Python Analytics Dev",
-  "image": "mcr.microsoft.com/devcontainers/python:3.11",
-  "features": {},
-  "postCreateCommand": "pip install -e ."
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "postCreateCommand": ".devcontainer/postCreate.sh",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "python.analysis.typeCheckingMode": "basic",
+        "editor.formatOnSave": true
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  }
 }
-
