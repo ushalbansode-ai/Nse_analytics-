@@ -41,7 +41,27 @@ function renderTable(data) {
 }
 
 loadData();
-// Auto Refresh every 5 minutes
-setInterval(loadData, 5 * 60 * 1000);
+// Auto Refresh only during market hours (IST)
+setInterval(() => {
+    const now = new Date();
+    
+    // Convert local time to IST
+    const istTime = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const hours = istTime.getHours();
+    const minutes = istTime.getMinutes();
+    const day = istTime.getDay();  // 0=Sun, 6=Sat
+
+    const isWeekday = day >= 1 && day <= 5;
+    const isMarketHours = (hours > 9 || (hours === 9 && minutes >= 15)) &&
+                          (hours < 15 || (hours === 15 && minutes <= 30));
+
+    if (isWeekday && isMarketHours) {
+        console.log("Refreshing (market hours IST)...");
+        loadData();
+    } else {
+        console.log("No refresh (market closed)");
+    }
+}, 5 * 60 * 1000); // 5 minutes
+
 
 
