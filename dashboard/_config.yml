@@ -1,0 +1,9 @@
+theme: null
+title: NSE Option Dashboard
+markdown: kramdown
+plugins: []
+exclude:
+  - "*.json"
+  - "*.py"
+  - "*.csv"
+  
