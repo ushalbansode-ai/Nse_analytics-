@@ -1,1 +1,7 @@
+{
+  "name": "Python Analytics Dev",
+  "image": "mcr.microsoft.com/devcontainers/python:3.11",
+  "features": {},
+  "postCreateCommand": "pip install -e ."
+}
 
