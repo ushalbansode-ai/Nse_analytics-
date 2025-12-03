@@ -52,7 +52,7 @@ def main():
     # 1) Fetch NIFTY OC + quote
     # -----------------------------------------
     nifty_oc = fetcher.fetch_option_chain("NIFTY")
-    nifty_quote = fetcher.fetch_quote("NIFTY")
+    nifty_quote = fetcher.get_quote("NIFTY")
 
     oc_file = save_json(nifty_oc, f"option_chain_NIFTY_{ts}.json")
     qt_file = save_json(nifty_quote, f"quote_NIFTY_{ts}.json")
@@ -60,14 +60,18 @@ def main():
     print(f"NIFTY OC saved:   {oc_file}")
     print(f"NIFTY Quote saved: {qt_file}")
 
-    underlying_nifty = nifty_quote.get("priceInfo", {}).get("lastPrice", 0)
+    underlying_nifty = (
+
+        nifty_quote.get("priceInfo", {})
+        .get("lastPrice", nifty_quote.get("underlying", 0))
+    )
     print("NIFTY Underlying:", underlying_nifty)
 
     # -----------------------------------------
     # 2) Fetch BankNifty OC + quote
     # -----------------------------------------
     bn_oc = fetcher.fetch_option_chain("BANKNIFTY")
-    bn_quote = fetcher.fetch_quote("BANKNIFTY")
+    bn_quote = fetcher.get_quote("BANKNIFTY")
 
     bn_oc_file = save_json(bn_oc, f"option_chain_BANKNIFTY_{ts}.json")
     bn_qt_file = save_json(bn_quote, f"quote_BANKNIFTY_{ts}.json")
@@ -75,7 +79,10 @@ def main():
     print(f"\nBANKNIFTY OC saved:   {bn_oc_file}")
     print(f"BANKNIFTY Quote saved: {bn_qt_file}")
 
-    underlying_bn = bn_quote.get("priceInfo", {}).get("lastPrice", 0)
+    underlying_bn = (
+        bn_quote.get("priceInfo", {})
+        .get("lastPrice", bn_quote.get("underlying", 0))
+    )
     print("BANKNIFTY Underlying:", underlying_bn)
 
     # -----------------------------------------
