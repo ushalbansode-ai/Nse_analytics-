@@ -1,76 +1,88 @@
-import sys
-import os
+"""
+Real NSE Fetch + Signal Engine
+"""
+
 import pandas as pd
-
-# ---------------------------------------------------------
-# FIX PYTHON PATH FOR GITHUB ACTIONS + LOCAL EXECUTION
-# ---------------------------------------------------------
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.append(ROOT_DIR)
-
-from src.nse_chain.fetcher import NSEOptionChainFetcher
-from src.nse_chain.analytics import OptionAnalytics
+from src.nse_chain.fetcher import fetch_snapshot
 from src.signals.signal_engine import detect_signal_row
 
+INDEX_LIST = ["NIFTY", "BANKNIFTY"]
 
-# ---------------------------------------------------------
-# CONFIG
-# ---------------------------------------------------------
-SYMBOL = "BANKNIFTY"      # or NIFTY
-STRIKES_AROUND = 10       # fetch ±10 strikes
-EXPIRY_INDEX = 0          # next expiry
+OUTPUT = {
+    "NIFTY": "data/derived_NIFTY.csv",
+    "BANKNIFTY": "data/derived_BANKNIFTY.csv",
+    "COMBINED": "data/derived_latest.csv",
+}
 
 
-# ---------------------------------------------------------
-# MAIN EXECUTION
-# ---------------------------------------------------------
-if __name__ == "__main__":
-    print("Fetching live option chain...")
+def prepare_option_chain(df):
+    """
+    Convert CE/PE rows into single-row per strike.
+    """
 
-    fetcher = NSEOptionChainFetcher()
+    ce = df[df["type"] == "CE"].copy()
+    pe = df[df["type"] == "PE"].copy()
 
-    chain = fetcher.get_option_chain(SYMBOL)
-    if chain is None:
-        print("❌ Could not fetch chain")
-        exit()
+    merged = ce.merge(
+        pe,
+        on=["timestamp", "underlying", "expiry", "strike"],
+        suffixes=("_CE", "_PE"),
+        how="inner"
+    )
 
-    print("✔ Chain fetched")
+    # Compute changes
+    merged["price_change_CE"] = merged["ltp_CE"] - merged["ltp_prev_CE"]
+    merged["price_change_PE"] = merged["ltp_PE"] - merged["ltp_prev_PE"]
 
-    # -------------------------------------
-    # PROCESS INTO ANALYTICS FORMAT
-    # -------------------------------------
-    analytics = OptionAnalytics()
-    df = analytics.prepare_dataframe(chain, strikes_around=STRIKES_AROUND)
+    merged["oi_diff"] = merged["oi_CE"] - merged["oi_PE"]
+    merged["oi_diff_prev"] = merged["oi_change_CE"] - merged["oi_change_PE"]
 
-    if df is None or df.empty:
-        print("❌ Analytics dataframe empty")
-        exit()
+    # IV default (NSE doesn't provide IV in this API)
+    merged["iv_ce"] = 10
+    merged["iv_pe"] = 10
 
-    print("✔ Analytics computed")
+    return merged
 
-    # -------------------------------------
-    # ADD SIGNALS
-    # -------------------------------------
-    all_signals = []
-    spot_price = chain["underlyingValue"]
+
+def process_symbol(symbol):
+    print(f"Fetching → {symbol}")
+
+    raw = fetch_snapshot(symbol)
+    if raw.empty:
+        print(f"❌ No data received for {symbol}")
+        return None
+
+    df = prepare_option_chain(raw)
+
+    spot = df["strike"].iloc[df["ltp_CE"].argmax()]  # rough spot proxy
+    signals = []
 
     for _, row in df.iterrows():
-        signal, reason = detect_signal_row(row, spot_price)
-        all_signals.append({
-            "strike": row["strike"],
-            "signal": signal,
-            "reason": reason
-        })
+        sig, reason = detect_signal_row(row, spot)
+        signals.append(sig if sig else "NO_SIGNAL")
 
-    signal_df = pd.DataFrame(all_signals)
-    print("\n=========== SIGNALS ===========")
-    print(signal_df[signal_df["signal"].notnull()].to_string(index=False))
+    df["signal"] = signals
 
-    # Save
-    out_path = f"data/derived_{SYMBOL}.csv"
-    os.makedirs("data", exist_ok=True)
-    signal_df.to_csv(out_path, index=False)
+    return df
 
-    print(f"\n✔ Saved to {out_path}")
-    
+
+def main():
+    all_dfs = []
+
+    for symbol in INDEX_LIST:
+        processed = process_symbol(symbol)
+        if processed is not None:
+            all_dfs.append(processed)
+            processed.to_csv(OUTPUT[symbol], index=False)
+            print(f"✔ Saved {OUTPUT[symbol]}")
+
+    # Combined file
+    if all_dfs:
+        final = pd.concat(all_dfs)
+        final.to_csv(OUTPUT["COMBINED"], index=False)
+        print(f"✔ Saved {OUTPUT['COMBINED']}")
+
+
+if __name__ == "__main__":
+    main()
     
