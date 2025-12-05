@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -26,7 +28,15 @@ jobs:
       - name: Run real NSE fetch
         run: python examples/real_fetch_example.py
 
-      - name: Upload results
+      - name: Commit CSV outputs to repo
+        run: |
+          git config user.email "actions@github.com"
+          git config user.name "github-actions"
+          git add data/*.csv
+          git commit -m "Update auto-generated CSV files" || echo "No changes to commit"
+          git push
+
+      - name: Upload results (artifact)
         uses: actions/upload-artifact@v4
         with:
           name: nse-output
