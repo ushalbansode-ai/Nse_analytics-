@@ -1,102 +1,132 @@
-#!/usr/bin/env python3
-# Real-time NSE Option Chain Fetch + Signal Generator
-
+import sys
 import os
 import pandas as pd
+import requests
+from datetime import datetime
 
-# ---------------------------------------------------------
-# Correct Imports (relative package import)
-# ---------------------------------------------------------
-from nse_chain.fetcher import fetch_snapshot
+# Import signal engine
 from signals.signal_engine import detect_signal_row
 
+# Allow absolute imports
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
-# ---------------------------------------------------------
-# OUTPUT FOLDER
-# ---------------------------------------------------------
-OUT = "signals_output"
-os.makedirs(OUT, exist_ok=True)
+HEADERS = {
+    "user-agent": "Mozilla/5.0",
+    "accept-language": "en-US,en;q=0.9",
+    "accept": "application/json",
+}
 
 
-# ---------------------------------------------------------
-# PROCESS ONE SYMBOL
-# ---------------------------------------------------------
-def process_symbol(symbol):
-    print(f"\nFetching → {symbol}")
+# -----------------------------
+# Fetch NSE snapshot
+# -----------------------------
+def fetch_snapshot(symbol: str):
+    url = f"https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
 
-    snap = fetch_snapshot(symbol)
-    if snap is None or "records" not in snap:
-        print(f"❌ No valid data for {symbol}")
-        return None
+    session = requests.Session()
+    session.get("https://www.nseindia.com", headers=HEADERS)
+    res = session.get(url, headers=HEADERS).json()
 
-    df = pd.DataFrame(snap["records"])
+    records = res["records"]["data"]
+
+    rows = []
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for row in records:
+        strike = row["strikePrice"]
+
+        ce = row.get("CE", {})
+        pe = row.get("PE", {})
+
+        rows.append({
+            "timestamp": timestamp,
+            "symbol": symbol,
+            "strike": strike,
+
+            # CE
+            "ltp_CE": ce.get("lastPrice"),
+            "ltp_prev_CE": ce.get("prevClose"),
+            "oi_CE": ce.get("openInterest"),
+            "oi_change_CE": ce.get("changeinOpenInterest"),
+            "iv_ce": ce.get("impliedVolatility"),
+
+            # PE
+            "ltp_PE": pe.get("lastPrice"),
+            "ltp_prev_PE": pe.get("prevClose"),
+            "oi_PE": pe.get("openInterest"),
+            "oi_change_PE": pe.get("changeinOpenInterest"),
+            "iv_pe": pe.get("impliedVolatility")
+        })
+
+    return pd.DataFrame(rows)
+
+
+# -----------------------------
+# Preprocess required columns
+# -----------------------------
+def preprocess(df):
     if df.empty:
-        print(f"❌ Empty data for {symbol}")
-        return None
+        return df
 
-    # Ensure numeric
-    numeric_cols = [
-        "price_change_CE","price_change_PE",
-        "oi_change_CE","oi_change_PE",
-        "oi_diff","oi_diff_prev",
-        "iv_ce","iv_pe"
-    ]
-    for col in numeric_cols:
-        if col in df:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Price changes
+    df["price_change_CE"] = df["ltp_CE"] - df["ltp_prev_CE"]
+    df["price_change_PE"] = df["ltp_PE"] - df["ltp_prev_PE"]
 
-    # Apply signals
-    df["signal"] = None
-    df["reason"] = ""
-
-    for i, row in df.iterrows():
-        sig, rsn = detect_signal_row(row, row.get("spot", None))
-        df.loc[i, "signal"] = sig
-        df.loc[i, "reason"] = rsn
+    # OI difference & shift
+    df["oi_diff"] = df["oi_CE"] - df["oi_PE"]
+    df["oi_diff_prev"] = df["oi_diff"].shift(1).fillna(0)
 
     return df
 
 
-# ---------------------------------------------------------
-# SAVE SIGNALS
-# ---------------------------------------------------------
-def save_signals(df_dict):
-    frames = []
+# -----------------------------
+# Process one symbol
+# -----------------------------
+def process_symbol(symbol):
+    print(f"\nFetching → {symbol}")
 
-    for sym, df in df_dict.items():
-        if df is None:
-            continue
+    df = fetch_snapshot(symbol)
 
-        # Filter signals
-        sig_df = df[df["signal"].notna()].copy()
-        sig_df["symbol"] = sym
-        frames.append(sig_df)
+    if df.empty:
+        print(f"❌ No valid data for {symbol}")
+        return pd.DataFrame()
 
-    # Final combined file
-    out_file = os.path.join(OUT, "signals.csv")
+    df = preprocess(df)
 
-    if not frames:
-        print("⚠ No signals detected — writing empty CSV")
-        pd.DataFrame(columns=["symbol", "signal", "reason"]).to_csv(out_file, index=False)
-        return
+    signals = []
+    spot = df["strike"].iloc[len(df)//2]  # crude approx
 
-    final_df = pd.concat(frames, ignore_index=True)
-    final_df.to_csv(out_file, index=False)
-    print(f"✅ Signals saved → {out_file}")
+    for _, row in df.iterrows():
+        sig, reason = detect_signal_row(row, spot)
+        if sig:
+            signals.append({
+                "timestamp": row["timestamp"],
+                "symbol": symbol,
+                "strike": row["strike"],
+                "signal": sig,
+                "reason": reason
+            })
+
+    sig_df = pd.DataFrame(signals)
+
+    # Write signals
+    out_path = f"signals_{symbol}.csv"
+    sig_df.to_csv(out_path, index=False)
+    print(f"📁 Written {out_path}")
+
+    return sig_df
 
 
-# ---------------------------------------------------------
-# MAIN
-# ---------------------------------------------------------
+# -----------------------------
+# Main
+# -----------------------------
 def main():
     symbols = ["NIFTY", "BANKNIFTY"]
-    results = {}
 
-    for s in symbols:
-        results[s] = process_symbol(s)
+    for sym in symbols:
+        process_symbol(sym)
 
-    save_signals(results)
-    print("\n🎯 Completed real-time fetch + signal generation.\n")
+    print("\n🎯 Completed real-time fetch + signal generation.")
 
 
 if __name__ == "__main__":
