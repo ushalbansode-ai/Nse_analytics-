@@ -1,13 +1,14 @@
-name: NSE Fetch & Analytics
+name: run-nse-fetcher
 
 on:
-  schedule:
-    - cron: "*/5 3-9 * * 1-5"   # Every 5 min during Indian market hours (9:00–15:30 IST)
-  workflow_dispatch:           # Manual trigger
+  workflow_dispatch:
 
 jobs:
-  run-nse-fetcher:
+  run:
     runs-on: ubuntu-latest
+
+    env:
+      PYTHONPATH: ${{ github.workspace }}/src
 
     steps:
       - name: Checkout repo
@@ -16,10 +17,11 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
 
       - name: Run real NSE fetch
         run: python examples/real_fetch_example.py
@@ -27,6 +29,6 @@ jobs:
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
-          name: output
-          path: data/
+          name: nse-output
+          path: data/*.csv
           
