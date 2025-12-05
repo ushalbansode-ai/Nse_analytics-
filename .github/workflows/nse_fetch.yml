@@ -2,8 +2,8 @@ name: run-nse-fetcher
 
 on:
   schedule:
-    - cron: "*/5 * * * *"     # ⬅ Auto-run every 5 minutes
-  workflow_dispatch:          # ⬅ Manual run button also available
+    - cron: "*/5 * * * *"     # Auto-run every 5 minutes
+  workflow_dispatch:          # Manual run button also available
 
 permissions:
   contents: write
@@ -30,20 +30,31 @@ jobs:
         run: |
           pip install -r requirements.txt
 
-      - name: Run real NSE fetch
+      # ⬇⬇ NEW: Run fetch + snapshot + signals
+      - name: Run real-time NSE fetch + signals
         run: python examples/real_fetch_example.py
 
-      - name: Commit CSV outputs to repo
+      # ⬇⬇ NEW: Commit signals + CSVs to repo
+      - name: Commit CSV & signal outputs
         run: |
           git config user.email "actions@github.com"
           git config user.name "github-actions"
-          git add data/*.csv
-          git commit -m "Auto-update CSV files (5-min cycle)" || echo "No changes"
+
+          # Add raw chain CSVs
+          git add data/*.csv || true
+
+          # Add derived signal CSV
+          git add signals/*.csv || true
+
+          git commit -m "Auto-update data + signals (5-min cycle)" || echo "No changes to commit"
           git push
 
+      # Optional: artifact download
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: nse-output
-          path: data/*.csv
-          
+          path: |
+            data/*.csv
+            signals/*.csv
+            
