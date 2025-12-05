@@ -13,35 +13,33 @@ def classify_build_up(price_change, oi_change):
     return "neutral"
 
 def compute_oi_differences(df):
-    pivot = df.pivot_table(
-        index=["strike"],
-        columns="option_type",
-        values=["oi", "oi_change", "ltp", "ltp_prev"],
-        aggfunc="first"
-    )
+    # Ensure required columns exist
+    required = {"strike", "type", "ltp", "oi", "oi_change", "ltp_prev"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
 
-    pivot.columns = ["_".join(c).strip() for c in pivot.columns]
-    pivot = pivot.reset_index()
+    # Pivot CE/PE side-by-side
+    pivot = df.pivot_table(index="strike", columns="type", values=["ltp", "ltp_prev", "oi", "oi_change"], aggfunc="first")
 
-    pivot["ce_price_change"] = pivot["ltp_CE"] - pivot["ltp_prev_CE"]
-    pivot["pe_price_change"] = pivot["ltp_PE"] - pivot["ltp_prev_PE"]
+    # Flatten multi-index columns
+    pivot.columns = [f"{c[0]}_{c[1]}" for c in pivot.columns]
 
-    pivot["total_oi"] = pivot["oi_CE"] + pivot["oi_PE"]
+    # Fill missing CE/PE entries with 0
+    for col in ["ltp_CE", "ltp_PE", "oi_CE", "oi_PE", "oi_change_CE", "oi_change_PE", "ltp_prev_CE", "ltp_prev_PE"]:
+        if col not in pivot.columns:
+            pivot[col] = 0
+
+    # Compute price change
+    pivot["price_change_CE"] = pivot["ltp_CE"] - pivot["ltp_prev_CE"]
+    pivot["price_change_PE"] = pivot["ltp_PE"] - pivot["ltp_prev_PE"]
+
+    # Compute OI difference
     pivot["oi_diff"] = pivot["oi_CE"] - pivot["oi_PE"]
-    pivot["oi_ratio"] = pivot["oi_CE"] / (pivot["oi_PE"] + 1)
 
-    pivot["ce_signal"] = pivot.apply(
-        lambda r: classify_build_up(r["ce_price_change"], r["oi_change_CE"]), axis=1
-    )
-    pivot["pe_signal"] = pivot.apply(
-        lambda r: classify_build_up(r["pe_price_change"], r["oi_change_PE"]), axis=1
-    )
-
-    pivot["oi_signal"] = pivot["oi_diff"].apply(
-        lambda x: "CE_Dominant" if x > 0 else "PE_Dominant"
-    )
-
+    pivot.reset_index(inplace=True)
     return pivot
+    
 
 def compute_oi_magnets_and_gaps(df, spot, band=1000, gap_threshold=0.3):
     df = df.copy()
