@@ -1,149 +1,150 @@
 #!/usr/bin/env python3
-
 import requests
-import time
 import json
+import time
 import pandas as pd
-from pathlib import Path
 from datetime import datetime
 
+# -----------------------------------------
+# FIX 1: NSE Updated URLs (Dec 2024–2025)
+# -----------------------------------------
+URLS = [
+    "https://www.nseindia.com/api/option-chain-indices?symbol={}",
+    "https://www.nseindia.com/api/option-chain-equities?symbol={}",
+    "https://www.nseindia.com/api/option-chain?symbol={}"
+]
+
 HEADERS = {
-    "authority": "www.nseindia.com",
-    "pragma": "no-cache",
-    "cache-control": "no-cache",
-    "sec-fetch-mode": "cors",
-    "sec-fetch-site": "same-origin",
-    "user-agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "accept": "*/*",
-    "referer": "https://www.nseindia.com/option-chain",
-    "accept-language": "en-US,en;q=0.9",
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Referer": "https://www.nseindia.com/option-chain"
 }
 
-API_URL = "https://www.nseindia.com/api/option-chain-indices?symbol={symbol}"
+SESSION = requests.Session()
 
-OUT_DIR = Path("data/option_chain_raw")
-
-
-def create_session():
-    s = requests.Session()
-    s.headers.update(HEADERS)
-
-    # Very important: fetch homepage once for cookies
+# -----------------------------------------
+# FIX 2: NSE sends cookies only after homepage visit
+# -----------------------------------------
+def ensure_nse_cookies():
     try:
-        s.get("https://www.nseindia.com/", timeout=15)
-        time.sleep(1)
-    except Exception:
+        SESSION.get("https://www.nseindia.com", headers=HEADERS, timeout=5)
+    except:
         pass
 
-    return s
+
+# -----------------------------------------
+# FIX 3: Parse ALL possible NSE formats
+# -----------------------------------------
+def parse_chain(json_data):
+    """
+    NSE now gives 3 possible response formats:
+
+    1) { "records": { "data": [...] } }  (OLD)
+    2) { "data": [...] }                 (NEW)
+    3) Direct list                       (Some symbols)
+
+    This parser handles all formats safely.
+    """
+    if not json_data:
+        return []
+
+    # Type-1 (OLD)
+    if "records" in json_data and "data" in json_data["records"]:
+        return json_data["records"]["data"]
+
+    # Type-2 (NEW)
+    if "data" in json_data and isinstance(json_data["data"], list):
+        return json_data["data"]
+
+    # Type-3 (list response)
+    if isinstance(json_data, list):
+        return json_data
+
+    # If nothing works, return empty
+    return []
 
 
-def fetch_option_chain(symbol):
-    s = create_session()
-    url = API_URL.format(symbol=symbol)
+# -----------------------------------------
+# FIX 4: Retry loop for throttling
+# -----------------------------------------
+def fetch_snapshot(symbol):
+    ensure_nse_cookies()
 
-    for attempt in range(1, 8):
-        try:
-            r = s.get(url, timeout=15)
-        except Exception as e:
-            print(f"[{symbol}] Connection error: {e}")
-            time.sleep(2)
-            continue
+    for attempt in range(7):
+        for url in URLS:
+            try:
+                full_url = url.format(symbol)
+                r = SESSION.get(full_url, headers=HEADERS, timeout=10)
+                data = r.json()
 
-        # If HTML returned → NSE blocked
-        if r.text.strip().startswith("<"):
-            print(f"[{symbol}] NSE returned HTML (blocked). Retrying {attempt}/7...")
-            time.sleep(2)
-            continue
+                parsed = parse_chain(data)
 
-        try:
-            data = r.json()
-        except:
-            print(f"[{symbol}] JSON parse failed. Retrying {attempt}/7...")
-            time.sleep(2)
-            continue
+                if len(parsed) > 0:
+                    return parsed
 
-        if "records" not in data:
-            print(f"[{symbol}] Missing records key. Retrying {attempt}/7...")
-            time.sleep(2)
-            continue
+                print(f"[{symbol}] Missing data. Retrying {attempt+1}/7…")
 
-        print(f"[{symbol}] Successfully fetched")
-        return data
+            except Exception as e:
+                print(f"[{symbol}] Error: {e}")
 
-    print(f"[{symbol}] FAILED after 7 attempts")
-    return None
+        time.sleep(1.2)
+
+    print(f"[{symbol}] FAILED after 7 attempts.")
+    return []
 
 
-def flatten_data(data, symbol):
-    if data is None:
+# -----------------------------------------
+# FIX 5: Convert chain records to DataFrame cleanly
+# -----------------------------------------
+def normalize_chain(records):
+    if not records:
         return pd.DataFrame()
 
     rows = []
-    recs = data["records"]["data"]
+    for row in records:
+        ce = row.get("CE", {})
+        pe = row.get("PE", {})
+        rows.append({
+            "strikePrice": row.get("strikePrice"),
+            "CE_OI": ce.get("openInterest"),
+            "CE_ChgOI": ce.get("changeinOpenInterest"),
+            "CE_LTP": ce.get("lastPrice"),
 
-    uv = data["records"].get("underlyingValue", None)
-
-    for r in recs:
-        strike = r.get("strikePrice")
-        expiry = r.get("expiryDate")
-
-        for side in ["CE", "PE"]:
-            opt = r.get(side)
-            if not opt:
-                continue
-
-            rows.append({
-                "symbol": symbol,
-                "underlying": uv,
-                "expiry": expiry,
-                "strike": strike,
-                "option_type": "CALL" if side == "CE" else "PUT",
-                "oi": opt.get("openInterest"),
-                "change_oi": opt.get("changeinOpenInterest"),
-                "volume": opt.get("totalTradedVolume"),
-                "ltp": opt.get("lastPrice"),
-                "iv": opt.get("impliedVolatility"),
-            })
-
+            "PE_OI": pe.get("openInterest"),
+            "PE_ChgOI": pe.get("changeinOpenInterest"),
+            "PE_LTP": pe.get("lastPrice"),
+        })
     return pd.DataFrame(rows)
 
 
+# -----------------------------------------
+# MAIN PROCESS
+# -----------------------------------------
 def process_symbol(symbol):
     print(f"\nFetching → {symbol}")
 
-    data = fetch_option_chain(symbol)
-    df = flatten_data(data, symbol)
+    raw = fetch_snapshot(symbol)
 
-    if df.empty:
+    if not raw:
         print(f"[{symbol}] Empty dataframe")
-        return None
+        return pd.DataFrame()
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    file = OUT_DIR / f"{symbol}_OC_{datetime.now().strftime('%Y%m%d')}.csv"
-    df.to_csv(file, index=False)
+    df = normalize_chain(raw)
+    print(f"[{symbol}] OK → {len(df)} rows")
 
-    print(f"[{symbol}] Saved → {file} ({len(df)} rows)")
     return df
 
 
 def main():
     symbols = ["NIFTY", "BANKNIFTY"]
-    all_df = []
+    final_results = {}
 
-    for s in symbols:
-        df = process_symbol(s)
-        if df is not None:
-            all_df.append(df)
+    for sym in symbols:
+        final_results[sym] = process_symbol(sym)
 
-    if all_df:
-        final = pd.concat(all_df, ignore_index=True)
-        final.to_csv(OUT_DIR / "combined_today.csv", index=False)
-        print("\nCombined CSV saved.")
+    print("\nDONE.\n")
 
 
 if __name__ == "__main__":
     main()
-
+    
